@@ -953,6 +953,288 @@ Powered by GENESIS AI ⚡
   );
 }
 
+// ═══════════ BUSINESS NAME AI GENERATOR ═══════════
+
+interface GeneratedName {
+  name: string;
+  name_hindi: string;
+  style: string;
+  tagline: string;
+  why: string;
+}
+
+const nameStyleConfig: Record<string, { emoji: string; label: string; gradient: string }> = {
+  simple: { emoji: "📋", label: "Simple & Clear", gradient: "linear-gradient(135deg, #3B82F6, #06B6D4)" },
+  emotional: { emoji: "❤️", label: "Emotional Hindi", gradient: "linear-gradient(135deg, #F59E0B, #EF4444)" },
+  modern: { emoji: "⚡", label: "Modern & Catchy", gradient: "linear-gradient(135deg, #8B5CF6, #EC4899)" },
+};
+
+function NameGeneratorSection() {
+  const [businessType, setBusinessType] = useState("");
+  const [keywords, setKeywords] = useState("");
+  const [location, setLocation] = useState("");
+  const [names, setNames] = useState<GeneratedName[]>([]);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [selectedName, setSelectedName] = useState<string | null>(null);
+
+  const handleGenerate = async () => {
+    if (!businessType.trim()) return;
+    setIsGenerating(true);
+    setNames([]);
+    setSelectedName(null);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/generate-names`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          business_type: businessType,
+          keywords,
+          location,
+          language: "hi",
+        }),
+      });
+      const data = await res.json();
+      setNames(data.names || []);
+    } catch (err) {
+      console.error("Name generation failed:", err);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handlePickName = (name: string) => {
+    setSelectedName(name);
+    navigator.clipboard?.writeText(name);
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      style={{ marginTop: "8px" }}
+    >
+      {/* Header */}
+      <div style={{ textAlign: "center", marginBottom: "24px" }}>
+        <div style={{ fontSize: "3rem", marginBottom: "8px" }}>💡</div>
+        <h3 style={{ color: "var(--text-primary)", marginBottom: "6px" }}>
+          Business Name <span className="gradient-text-accent">AI Generator</span>
+        </h3>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.9rem" }}>
+          No name yet? Let AI suggest 3 perfect options for you.
+        </p>
+      </div>
+
+      {/* Input form */}
+      <div
+        className="glass-card"
+        style={{
+          maxWidth: "600px",
+          margin: "0 auto",
+          padding: "24px",
+        }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+          <div>
+            <label style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "4px", display: "block" }}>
+              Business Type *
+            </label>
+            <input
+              className="chat-input"
+              placeholder="e.g., tiffin delivery, chai stall, tailoring"
+              value={businessType}
+              onChange={(e) => setBusinessType(e.target.value)}
+              style={{ width: "100%", padding: "10px 14px", fontSize: "0.9rem" }}
+            />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+            <div>
+              <label style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "4px", display: "block" }}>
+                Keywords (optional)
+              </label>
+              <input
+                className="chat-input"
+                placeholder="e.g., homemade, desi, organic"
+                value={keywords}
+                onChange={(e) => setKeywords(e.target.value)}
+                style={{ width: "100%", padding: "10px 14px", fontSize: "0.9rem" }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "4px", display: "block" }}>
+                Location (optional)
+              </label>
+              <input
+                className="chat-input"
+                placeholder="e.g., Laxmi Nagar, Delhi"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                style={{ width: "100%", padding: "10px 14px", fontSize: "0.9rem" }}
+              />
+            </div>
+          </div>
+
+          <motion.button
+            className="btn btn-accent"
+            onClick={handleGenerate}
+            disabled={isGenerating || !businessType.trim()}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            style={{ width: "100%", marginTop: "4px" }}
+          >
+            {isGenerating ? (
+              <>
+                <Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} />
+                Generating names...
+              </>
+            ) : (
+              <>
+                <Sparkles size={18} />
+                Generate 3 Business Names
+              </>
+            )}
+          </motion.button>
+        </div>
+      </div>
+
+      {/* Generated Names */}
+      <AnimatePresence>
+        {names.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(3, 1fr)",
+              gap: "16px",
+              maxWidth: "900px",
+              margin: "24px auto 0",
+            }}
+          >
+            {names.map((n, i) => {
+              const styleConf = nameStyleConfig[n.style] || nameStyleConfig.simple;
+              const isSelected = selectedName === n.name;
+              return (
+                <motion.div
+                  key={n.name + i}
+                  className={`glass-card ${isSelected ? "selected" : ""}`}
+                  initial={{ opacity: 0, y: 20, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  transition={{ delay: i * 0.12 }}
+                  onClick={() => handlePickName(n.name)}
+                  style={{
+                    cursor: "pointer",
+                    padding: "20px",
+                    border: isSelected
+                      ? "2px solid var(--orange)"
+                      : "1px solid var(--glass-border)",
+                    transition: "all 0.2s ease",
+                    position: "relative",
+                    overflow: "hidden",
+                  }}
+                  whileHover={{ scale: 1.03, y: -4 }}
+                  whileTap={{ scale: 0.97 }}
+                >
+                  {/* Style badge */}
+                  <div
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "5px",
+                      padding: "3px 10px",
+                      borderRadius: "20px",
+                      background: styleConf.gradient,
+                      color: "#fff",
+                      fontSize: "0.7rem",
+                      fontWeight: 600,
+                      marginBottom: "12px",
+                    }}
+                  >
+                    {styleConf.emoji} {styleConf.label}
+                  </div>
+
+                  {/* Name */}
+                  <h3 style={{ fontSize: "1.15rem", fontWeight: 700, marginBottom: "4px" }}>
+                    {n.name}
+                  </h3>
+                  <p style={{ fontSize: "0.95rem", color: "var(--orange)", marginBottom: "8px" }}>
+                    {n.name_hindi}
+                  </p>
+
+                  {/* Tagline */}
+                  <p style={{
+                    fontSize: "0.8rem",
+                    color: "var(--text-secondary)",
+                    fontStyle: "italic",
+                    marginBottom: "8px",
+                  }}>
+                    &ldquo;{n.tagline}&rdquo;
+                  </p>
+
+                  {/* Why */}
+                  <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                    {n.why}
+                  </p>
+
+                  {/* Selected indicator */}
+                  {isSelected && (
+                    <motion.div
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      style={{
+                        position: "absolute",
+                        top: "12px",
+                        right: "12px",
+                        width: "24px",
+                        height: "24px",
+                        borderRadius: "50%",
+                        background: "var(--green)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      <CheckCircle2 size={14} color="#fff" />
+                    </motion.div>
+                  )}
+                </motion.div>
+              );
+            })}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Selected confirmation */}
+      {selectedName && (
+        <motion.p
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          style={{
+            textAlign: "center",
+            marginTop: "16px",
+            fontSize: "0.85rem",
+            color: "var(--green)",
+          }}
+        >
+          ✅ &ldquo;{selectedName}&rdquo; copied! Use it in the chat above to launch.
+        </motion.p>
+      )}
+
+      {/* Divider and hint */}
+      {!names.length && !isGenerating && (
+        <p style={{
+          textAlign: "center",
+          marginTop: "20px",
+          fontSize: "0.85rem",
+          color: "var(--text-muted)",
+        }}>
+          Or talk to the AI avatar / chat to tell us about your business. Then hit &ldquo;Launch My Business&rdquo; 🚀
+        </p>
+      )}
+    </motion.div>
+  );
+}
+
 // ═══════════ DASHBOARD PAGE ═══════════
 
 export default function DashboardPage() {
@@ -1071,26 +1353,9 @@ export default function DashboardPage() {
           </motion.div>
         )}
 
-        {/* Not launched yet — show intro */}
+        {/* Not launched yet — show Name Generator + intro */}
         {!sessionId && !isLaunching && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            style={{
-              textAlign: "center",
-              padding: "64px 24px",
-              color: "var(--text-muted)",
-            }}
-          >
-            <div style={{ fontSize: "3rem", marginBottom: "16px" }}>🚀</div>
-            <h3 style={{ color: "var(--text-primary)", marginBottom: "8px" }}>
-              Ready to Launch
-            </h3>
-            <p style={{ maxWidth: "400px", margin: "0 auto" }}>
-              Talk to the AI avatar or use the chat to tell us about your
-              business. Then hit &quot;Launch My Business&quot; to start all 6 agents.
-            </p>
-          </motion.div>
+          <NameGeneratorSection />
         )}
 
         {/* Launching state */}

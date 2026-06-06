@@ -98,6 +98,70 @@ async def health():
     return {"status": "ok", "service": "genesis-backend"}
 
 
+class NameGenRequest(BaseModel):
+    """Input for business name generation."""
+    business_type: str
+    keywords: str = ""
+    language: str = "hi"
+    location: str = ""
+
+
+@app.post("/api/generate-names")
+async def generate_business_names(req: NameGenRequest):
+    """Generate 3 AI-powered business name suggestions.
+    
+    Returns names in three styles:
+    1. Simple & Clear (e.g., "Ramesh Tiffins")
+    2. Emotional Hindi (e.g., "Ghar Ka Swad")
+    3. Modern & Catchy (e.g., "The Tiffin Wala")
+    """
+    from services.gemini_client import generate_json
+
+    result = await generate_json(f"""
+You are an Indian business naming expert. Generate 3 creative business name options.
+
+Business Type: {req.business_type}
+Keywords/Products: {req.keywords}
+Location: {req.location}
+Language Preference: {req.language}
+
+Return JSON with exactly 3 names in different styles:
+{{
+    "names": [
+        {{
+            "name": "Simple clear name (e.g., Ramesh Tiffins, Sharma Sweets)",
+            "name_hindi": "Same name in Devanagari script",
+            "style": "simple",
+            "tagline": "Short Hindi tagline for this name",
+            "why": "1 sentence why this name works (in Hindi)"
+        }},
+        {{
+            "name": "Emotional Hindi name (e.g., Ghar Ka Swad, Maa Ki Rasoi)",
+            "name_hindi": "Same name in Devanagari script",
+            "style": "emotional",
+            "tagline": "Short Hindi tagline for this name",
+            "why": "1 sentence why this name works (in Hindi)"
+        }},
+        {{
+            "name": "Modern catchy name (e.g., The Tiffin Wala, Chai Junction)",
+            "name_hindi": "Same name in Devanagari script",
+            "style": "modern",
+            "tagline": "Short Hindi tagline for this name",
+            "why": "1 sentence why this name works (in Hindi)"
+        }}
+    ]
+}}
+
+Rules:
+- Names must feel AUTHENTICALLY Indian, not translated English
+- Each name must be easy to pronounce and remember
+- Include the location or product vibe if it makes sense
+- Think about what looks good on a signboard and delivery box
+""")
+
+    return {"names": result.get("names", [])}
+
+
 @app.post("/api/launch", response_model=LaunchResponse)
 async def launch_business(req: LaunchRequest, background_tasks: BackgroundTasks):
     """Launch a new business.
