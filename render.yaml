@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: genesis-backend
+    runtime: python
+    region: singapore  # Closest to India for low latency
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: FAL_KEY
+        sync: false
+      - key: GOOGLE_PLACES_KEY
+        sync: false
+      - key: KIE_API_KEY
+        sync: false
+      - key: VERCEL_TOKEN
+        sync: false
+      - key: TRUGEN_API_KEY
+        sync: false
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+    plan: free
+    autoDeploy: true  # Auto-redeploy on every git push
