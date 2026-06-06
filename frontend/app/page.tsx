@@ -15,8 +15,14 @@ import {
   LogIn,
 } from "lucide-react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useRef, useState, useEffect } from "react";
 import { useUser, UserButton } from "@clerk/nextjs";
+
+const Hero3D = dynamic(() => import("./components/Hero3D"), {
+  ssr: false,
+  loading: () => null,
+});
 
 // ═══════════ ANIMATION VARIANTS ═══════════
 
@@ -228,31 +234,10 @@ export default function LandingPage() {
       <motion.section
         ref={heroRef}
         className="hero"
-        style={{ opacity: heroOpacity, scale: heroScale }}
+        style={{ opacity: heroOpacity, scale: heroScale, position: "relative" }}
       >
-        {/* Animated gradient rings */}
-        <div
-          style={{
-            position: "absolute",
-            width: "600px",
-            height: "600px",
-            borderRadius: "50%",
-            border: "1px solid rgba(59,130,246,0.1)",
-            animation: "hero-glow 8s ease-in-out infinite alternate",
-            pointerEvents: "none",
-          }}
-        />
-        <div
-          style={{
-            position: "absolute",
-            width: "400px",
-            height: "400px",
-            borderRadius: "50%",
-            border: "1px solid rgba(139,92,246,0.08)",
-            animation: "hero-glow 10s ease-in-out infinite alternate-reverse",
-            pointerEvents: "none",
-          }}
-        />
+        {/* Three.js 3D Background */}
+        <Hero3D />
 
         <motion.div
           initial={{ opacity: 0, y: 20 }}
