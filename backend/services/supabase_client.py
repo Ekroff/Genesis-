@@ -115,6 +115,28 @@ async def get_session(session_id: str) -> dict:
     return await asyncio.to_thread(_fetch)
 
 
+async def get_session_if_owner(session_id: str, user_id: str) -> dict | None:
+    """Fetch a session only if the user owns it. Returns None if not owned.
+
+    This prevents IDOR (Insecure Direct Object Reference) attacks —
+    users cannot access other users' sessions by guessing UUIDs.
+    """
+    if not supabase:
+        return {}
+
+    def _fetch():
+        result = (
+            supabase.table("sessions")
+            .select("*")
+            .eq("id", session_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+        return result.data[0] if result.data else None
+
+    return await asyncio.to_thread(_fetch)
+
+
 async def upload_to_storage(bucket: str, path: str, file_bytes: bytes, content_type: str = "application/octet-stream") -> str:
     """Upload a file to Supabase Storage. Returns the public URL."""
     if not supabase:
@@ -125,3 +147,4 @@ async def upload_to_storage(bucket: str, path: str, file_bytes: bytes, content_t
         return supabase.storage.from_(bucket).get_public_url(path)
 
     return await asyncio.to_thread(_upload)
+

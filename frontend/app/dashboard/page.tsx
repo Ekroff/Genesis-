@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useAuth } from "@clerk/nextjs";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Sparkles,
@@ -33,6 +34,25 @@ import { AgentTask, AGENT_CONFIGS, LaunchRequest } from "@/lib/types";
 // ═══════════ CONSTANTS ═══════════
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+
+/**
+ * Authenticated fetch — attaches Clerk JWT to requests.
+ * Use for all protected backend endpoints.
+ */
+async function authFetch(
+  url: string,
+  getToken: () => Promise<string | null>,
+  options: RequestInit = {}
+): Promise<Response> {
+  const token = await getToken();
+  const headers: Record<string, string> = {
+    ...(options.headers as Record<string, string> || {}),
+  };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  return fetch(url, { ...options, headers });
+}
 
 const agentIcons: Record<string, React.ReactNode> = {
   brand: <Sparkles size={20} />,
@@ -802,6 +822,7 @@ function CompletionPanel({
   sessionId: string;
   businessName: string;
 }) {
+  const { getToken } = useAuth();
   const [showConfetti, setShowConfetti] = useState(true);
   const [emailSent, setEmailSent] = useState(false);
 
@@ -836,14 +857,24 @@ Powered by GENESIS AI ⚡
   };
 
   // Business card download (#5)
-  const downloadBusinessCard = () => {
-    window.open(`${BACKEND_URL}/api/business-card/${sessionId}`, "_blank");
+  const downloadBusinessCard = async () => {
+    const url = `${BACKEND_URL}/api/business-card/${sessionId}`;
+    const res = await authFetch(url, getToken);
+    if (res.ok) {
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = "business_card.pdf";
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    }
   };
 
   // Summary email (#7)
   const sendSummary = async () => {
     try {
-      await fetch(`${BACKEND_URL}/api/send-summary/${sessionId}`, { method: "POST" });
+      await authFetch(`${BACKEND_URL}/api/send-summary/${sessionId}`, getToken, { method: "POST" });
       setEmailSent(true);
     } catch (e) {
       console.error("Failed to send summary:", e);
@@ -1238,6 +1269,7 @@ function NameGeneratorSection() {
 // ═══════════ DASHBOARD PAGE ═══════════
 
 export default function DashboardPage() {
+  const { getToken } = useAuth();
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isLaunching, setIsLaunching] = useState(false);
   const [launchData, setLaunchData] = useState<LaunchRequest | null>(null);
@@ -1247,7 +1279,7 @@ export default function DashboardPage() {
     setIsLaunching(true);
     setLaunchData(data);
     try {
-      const res = await fetch(`${BACKEND_URL}/api/launch`, {
+      const res = await authFetch(`${BACKEND_URL}/api/launch`, getToken, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
@@ -1266,7 +1298,7 @@ export default function DashboardPage() {
   const handleRetry = async (agentName: string) => {
     if (!sessionId) return;
     try {
-      await fetch(`${BACKEND_URL}/api/retry/${sessionId}/${agentName}`, {
+      await authFetch(`${BACKEND_URL}/api/retry/${sessionId}/${agentName}`, getToken, {
         method: "POST",
       });
     } catch (err) {

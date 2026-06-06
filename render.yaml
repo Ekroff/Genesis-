@@ -23,6 +23,17 @@ services:
         sync: false
       - key: TRUGEN_API_KEY
         sync: false
+      - key: GMAIL_ADDRESS
+        sync: false
+      - key: GMAIL_APP_PASSWORD
+        sync: false
+      # Auth & Security
+      - key: CLERK_JWKS_URL
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: ENVIRONMENT
+        value: "production"
       - key: PYTHON_VERSION
         value: "3.11.9"
     plan: free

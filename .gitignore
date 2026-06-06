@@ -30,3 +30,11 @@ Thumbs.db
 # Playwright
 playwright-report/
 test-results/
+
+# Security — NEVER commit these
+*.pem
+*.key
+*.cert
+*.p12
+secrets/
+.secrets/

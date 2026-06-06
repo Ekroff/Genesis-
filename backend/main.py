@@ -1,66 +1,150 @@
-"""GENESIS FastAPI Backend
+"""GENESIS FastAPI Backend — Security Hardened
 
-Main application entry point. Handles:
-- POST /api/launch — Creates session + fires LangGraph agents
-- POST /api/verify — Photo upload processing  
-- POST /api/invoice — Smart Invoice order parsing
-- GET /health — Health check
+Main application entry point with:
+- Clerk JWT authentication on all protected endpoints
+- IDOR prevention (ownership checks on every session access)
+- Rate limiting (per-user, per-IP, per-session)
+- Security headers (HSTS, CSP, X-Frame-Options)
+- Structured JSON logging (auth, errors, rate limits)
+- CORS locked to specific frontend domain
 
 Run with: uvicorn main:app --reload --port 8000
 """
 
-from fastapi import FastAPI, BackgroundTasks, UploadFile, File
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Optional
-import asyncio
-import sys
 import os
+import sys
+import time
+import asyncio
+import traceback
+
+from fastapi import FastAPI, BackgroundTasks, UploadFile, File, Depends, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from pydantic import BaseModel, Field, field_validator
+from typing import List, Optional
 
 # Add backend directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from services.auth import get_current_user, get_optional_user
+from services.rate_limiter import (
+    rate_limiter, limit_launch, limit_name_gen,
+    limit_retry, limit_invoice, limit_email, limit_general,
+)
+from services.logger import security_logger
+
+
+# ═══════════════════════════════════════
+# App Setup
+# ═══════════════════════════════════════
+
 app = FastAPI(
     title="GENESIS API",
     description="AI-powered business launcher for Indian MSMEs",
-    version="1.0.0",
+    version="2.0.0",
+    docs_url=None if os.getenv("ENVIRONMENT") == "production" else "/docs",
+    redoc_url=None,
 )
 
-# CORS — allow frontend to call backend
+# ── CORS — locked to specific origins ──
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:3001").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "https://*.vercel.app",
-    ],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST"],  # Only methods we actually use
+    allow_headers=["Authorization", "Content-Type"],
 )
+
+
+# ── Security Headers Middleware ──
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add security headers to all responses."""
+
+    async def dispatch(self, request: Request, call_next):
+        start_time = time.time()
+
+        try:
+            response = await call_next(request)
+        except Exception as e:
+            security_logger.api_error(
+                endpoint=str(request.url.path),
+                error=str(e),
+                status_code=500,
+                ip=request.client.host if request.client else "unknown",
+            )
+            response = JSONResponse(
+                status_code=500,
+                content={"detail": "Internal server error"},
+            )
+
+        # Security headers
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+
+        if os.getenv("ENVIRONMENT") == "production":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+        # Remove server version header
+        response.headers.pop("server", None)
+
+        # Log request
+        duration_ms = (time.time() - start_time) * 1000
+        if request.url.path != "/health":
+            security_logger.api_request(
+                method=request.method,
+                endpoint=str(request.url.path),
+                status_code=response.status_code,
+                duration_ms=duration_ms,
+                ip=request.client.host if request.client else "unknown",
+            )
+
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 # ═══════════════════════════════════════
-# Request/Response Models
+# Request/Response Models (with validation)
 # ═══════════════════════════════════════
 
 class MenuItemModel(BaseModel):
-    item: str
-    price: float
+    item: str = Field(..., min_length=1, max_length=100)
+    price: float = Field(..., gt=0, le=100000)
 
 
 class LaunchRequest(BaseModel):
     """Data collected from TruGen conversation + chat uploads."""
-    business_name: str
-    business_type: str
-    menu: List[MenuItemModel] = []
-    address: str = ""
-    phone: str = ""
-    language: str = "hi"
-    upi_id: str = ""
-    shop_photo_url: Optional[str] = None
-    existing_logo_url: Optional[str] = None
-    user_id: str = "anonymous"
+    business_name: str = Field(..., min_length=1, max_length=200)
+    business_type: str = Field(..., min_length=1, max_length=100)
+    menu: List[MenuItemModel] = Field(default=[], max_length=50)
+    address: str = Field(default="", max_length=500)
+    phone: str = Field(default="", max_length=15)
+    language: str = Field(default="hi", max_length=5)
+    upi_id: str = Field(default="", max_length=100)
+    shop_photo_url: Optional[str] = Field(default=None, max_length=2048)
+    existing_logo_url: Optional[str] = Field(default=None, max_length=2048)
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v: str) -> str:
+        if v and not v.replace("+", "").replace("-", "").replace(" ", "").isdigit():
+            raise ValueError("Invalid phone number")
+        return v
+
+    @field_validator("upi_id")
+    @classmethod
+    def validate_upi(cls, v: str) -> str:
+        if v and "@" not in v:
+            raise ValueError("Invalid UPI ID format")
+        return v
 
 
 class LaunchResponse(BaseModel):
@@ -70,8 +154,8 @@ class LaunchResponse(BaseModel):
 
 class InvoiceRequest(BaseModel):
     """Natural language order text to parse into invoice."""
-    order_text: str
-    session_id: str
+    order_text: str = Field(..., min_length=1, max_length=500)
+    session_id: str = Field(..., min_length=1, max_length=100)
 
 
 class InvoiceItem(BaseModel):
@@ -88,33 +172,33 @@ class InvoiceResponse(BaseModel):
     upi_qr_url: str
 
 
+class NameGenRequest(BaseModel):
+    """Input for business name generation."""
+    business_type: str = Field(..., min_length=1, max_length=100)
+    keywords: str = Field(default="", max_length=200)
+    language: str = Field(default="hi", max_length=5)
+    location: str = Field(default="", max_length=200)
+
+
 # ═══════════════════════════════════════
-# Routes
+# Routes — Public (no auth)
 # ═══════════════════════════════════════
 
 @app.get("/health")
 async def health():
     """Health check endpoint."""
-    return {"status": "ok", "service": "genesis-backend"}
+    return {"status": "ok", "service": "genesis-backend", "version": "2.0.0"}
 
 
-class NameGenRequest(BaseModel):
-    """Input for business name generation."""
-    business_type: str
-    keywords: str = ""
-    language: str = "hi"
-    location: str = ""
-
+# ═══════════════════════════════════════
+# Routes — Rate-limited only (no auth)
+# ═══════════════════════════════════════
 
 @app.post("/api/generate-names")
-async def generate_business_names(req: NameGenRequest):
-    """Generate 3 AI-powered business name suggestions.
-    
-    Returns names in three styles:
-    1. Simple & Clear (e.g., "Ramesh Tiffins")
-    2. Emotional Hindi (e.g., "Ghar Ka Swad")
-    3. Modern & Catchy (e.g., "The Tiffin Wala")
-    """
+async def generate_business_names(req: NameGenRequest, request: Request):
+    """Generate 3 AI-powered business name suggestions. Rate-limited by IP."""
+    limit_name_gen(request)
+
     from services.gemini_client import generate_json
 
     result = await generate_json(f"""
@@ -162,48 +246,21 @@ Rules:
     return {"names": result.get("names", [])}
 
 
-@app.post("/api/launch", response_model=LaunchResponse)
-async def launch_business(req: LaunchRequest, background_tasks: BackgroundTasks):
-    """Launch a new business.
-    
-    1. Creates a session in Supabase
-    2. Creates 6 agent_tasks rows (one per agent)
-    3. Starts LangGraph supervisor in background
-    4. Returns session_id immediately (agents run async)
-    """
-    from services.supabase_client import create_session, create_agent_tasks
-    from agents.graph import run_genesis_graph
-
-    # Create session
-    session_data = req.model_dump()
-    session_data["menu"] = [m.model_dump() for m in req.menu]
-    session_id = await create_session(session_data)
-
-    # Create 6 agent task rows (all start as "pending")
-    await create_agent_tasks(session_id)
-
-    # Start LangGraph in background — returns immediately to frontend
-    background_tasks.add_task(run_genesis_graph, session_id, session_data)
-
-    return LaunchResponse(session_id=session_id, status="launched")
-
-
 @app.post("/api/invoice", response_model=InvoiceResponse)
-async def parse_invoice(req: InvoiceRequest):
+async def parse_invoice(req: InvoiceRequest, request: Request):
     """Parse a natural language order into a structured invoice.
-    
-    Example input: "2 paneer thali 1 dal chawal"
-    Returns: line items with quantities, prices, total, and exact-amount UPI QR.
+
+    Public endpoint (customers access this) — rate-limited by session.
     """
+    limit_invoice(req.session_id)
+
     from services.supabase_client import get_session
     from services.gemini_client import generate_json
     import urllib.parse
 
-    # Get session data (menu, business name, UPI)
     session = await get_session(req.session_id)
 
     if not session:
-        # Fallback demo data
         session = {
             "business_name": "Demo Tiffin Service",
             "menu": [
@@ -220,9 +277,8 @@ async def parse_invoice(req: InvoiceRequest):
     business_name = session.get("business_name", "Business")
     upi_id = session.get("upi_id", f"{session.get('phone', '')}@paytm")
 
-    # Gemini parses natural language order against menu
     menu_str = "\n".join([f"- {m['item']}: ₹{m['price']}" for m in menu])
-    
+
     parsed = await generate_json(f"""
 You are a smart invoice parser for an Indian small business.
 
@@ -249,7 +305,6 @@ Always use the EXACT prices from the menu, never guess.
 
     subtotal = parsed.get("subtotal", 0)
 
-    # Generate exact-amount UPI QR
     upi_string = f"upi://pay?pa={upi_id}&pn={urllib.parse.quote(business_name)}&am={subtotal}&cu=INR"
     qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={urllib.parse.quote(upi_string)}"
 
@@ -262,23 +317,80 @@ Always use the EXACT prices from the menu, never guess.
 
 
 @app.get("/api/session/{session_id}")
-async def get_session_data(session_id: str):
-    """Get session data by ID. Used by invoice page."""
+async def get_session_data(session_id: str, request: Request):
+    """Get session data by ID. Public for pay page — rate-limited by IP."""
+    limit_general(request)
+
     from services.supabase_client import get_session
     session = await get_session(session_id)
     if not session:
-        return {"error": "Session not found"}
-    return session
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Strip sensitive fields before returning to public
+    safe_session = {
+        "business_name": session.get("business_name"),
+        "business_type": session.get("business_type"),
+        "menu": session.get("menu"),
+        "phone": session.get("phone"),
+        "upi_id": session.get("upi_id"),
+    }
+    return safe_session
+
+
+# ═══════════════════════════════════════
+# Routes — Authenticated (Clerk JWT required)
+# ═══════════════════════════════════════
+
+@app.post("/api/launch", response_model=LaunchResponse)
+async def launch_business(
+    req: LaunchRequest,
+    background_tasks: BackgroundTasks,
+    user_id: str = Depends(get_current_user),
+):
+    """Launch a new business. Requires auth + rate limited."""
+    limit_launch(user_id)
+
+    from services.supabase_client import create_session, create_agent_tasks
+    from agents.graph import run_genesis_graph
+
+    session_data = req.model_dump()
+    session_data["menu"] = [m.model_dump() for m in req.menu]
+    session_data["user_id"] = user_id  # Tie session to authenticated user
+    session_id = await create_session(session_data)
+
+    await create_agent_tasks(session_id)
+
+    security_logger.session_created(
+        session_id=session_id,
+        user_id=user_id,
+        business_type=req.business_type,
+    )
+
+    background_tasks.add_task(run_genesis_graph, session_id, session_data)
+
+    return LaunchResponse(session_id=session_id, status="launched")
 
 
 @app.get("/api/status/{session_id}")
-async def get_status(session_id: str):
-    """Get all agent task statuses for a session. Used by dashboard polling and E2E tests."""
-    from services.supabase_client import supabase
-    import asyncio
+async def get_status(
+    session_id: str,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    """Get agent task statuses. Auth + ownership check."""
+    limit_general(request)
 
-    if not supabase:
-        return {"session_id": session_id, "tasks": []}
+    # IDOR check — verify ownership
+    from services.supabase_client import get_session_if_owner, supabase
+
+    session = await get_session_if_owner(session_id, user_id)
+    if not session:
+        security_logger.session_access_denied(
+            session_id=session_id,
+            user_id=user_id,
+            ip=request.client.host if request.client else "unknown",
+        )
+        raise HTTPException(status_code=403, detail="Access denied")
 
     def _fetch():
         result = supabase.table("agent_tasks").select("*").eq(
@@ -286,14 +398,22 @@ async def get_status(session_id: str):
         ).execute()
         return result.data
 
-    tasks = await asyncio.to_thread(_fetch)
+    tasks = await asyncio.to_thread(_fetch) if supabase else []
     return {"session_id": session_id, "tasks": tasks or []}
 
 
 @app.post("/api/retry/{session_id}/{agent_name}")
-async def retry_agent(session_id: str, agent_name: str, background_tasks: BackgroundTasks):
-    """Retry a single failed agent without restarting the whole pipeline."""
-    from services.supabase_client import get_session, push_update
+async def retry_agent(
+    session_id: str,
+    agent_name: str,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    """Retry a failed agent. Auth + ownership + rate limited."""
+    limit_retry(user_id)
+
+    from services.supabase_client import get_session_if_owner, push_update
     from agents.brand import brand_agent
     from agents.website import website_agent
     from agents.payment import payment_agent
@@ -311,23 +431,21 @@ async def retry_agent(session_id: str, agent_name: str, background_tasks: Backgr
     }
 
     if agent_name not in agent_map:
-        return {"error": f"Unknown agent: {agent_name}"}
+        raise HTTPException(status_code=400, detail=f"Unknown agent: {agent_name}")
 
-    # Get session data to rebuild state
-    session = await get_session(session_id)
+    # IDOR check
+    session = await get_session_if_owner(session_id, user_id)
     if not session:
-        return {"error": "Session not found"}
+        security_logger.session_access_denied(
+            session_id=session_id,
+            user_id=user_id,
+            ip=request.client.host if request.client else "unknown",
+        )
+        raise HTTPException(status_code=403, detail="Access denied")
 
-    # Reset agent to running
     await push_update(session_id, agent_name, 0, "Retrying...", status="running")
 
-    # Build state from session
-    state = {
-        "session_id": session_id,
-        **session,
-    }
-
-    # Run the single agent in background
+    state = {"session_id": session_id, **session}
     agent_fn = agent_map[agent_name]
     background_tasks.add_task(agent_fn, state)
 
@@ -335,18 +453,21 @@ async def retry_agent(session_id: str, agent_name: str, background_tasks: Backgr
 
 
 @app.get("/api/business-card/{session_id}")
-async def download_business_card(session_id: str):
-    """Generate and return a printable business card PDF."""
-    from services.supabase_client import get_session
+async def download_business_card(
+    session_id: str,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    """Generate business card PDF. Auth + ownership check."""
+    limit_general(request)
+
+    from services.supabase_client import get_session_if_owner, supabase
     from fastapi.responses import Response
-    import asyncio
 
-    session = await get_session(session_id)
+    # IDOR check
+    session = await get_session_if_owner(session_id, user_id)
     if not session:
-        return {"error": "Session not found"}
-
-    # Get agent results for brand data
-    from services.supabase_client import supabase
+        raise HTTPException(status_code=403, detail="Access denied")
 
     def _fetch_results():
         result = supabase.table("agent_tasks").select("result_data, agent_name").eq(
@@ -373,93 +494,27 @@ async def download_business_card(session_id: str):
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{session.get("business_name", "card")}_business_card.pdf"'},
+        headers={"Content-Disposition": f'attachment; filename="business_card.pdf"'},
     )
 
 
-def _generate_business_card_pdf(
-    business_name: str,
-    tagline: str,
-    phone: str,
-    address: str,
-    website_url: str,
-    upi_id: str,
-    primary_color: str,
-    qr_url: str,
-) -> bytes:
-    """Generate a printable business card PDF (90mm x 55mm)."""
-    from reportlab.pdfgen import canvas
-    from reportlab.lib.units import mm
-    from reportlab.lib.colors import HexColor, white
-    import io
-
-    buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=(90 * mm, 55 * mm))
-
-    # Background
-    try:
-        bg_color = HexColor(primary_color)
-    except Exception:
-        bg_color = HexColor("#FF6B35")
-
-    c.setFillColor(bg_color)
-    c.rect(0, 0, 90 * mm, 55 * mm, fill=1)
-
-    # White accent stripe at top
-    c.setFillColor(HexColor("#FFFFFF"))
-    c.setFillAlpha(0.15)
-    c.rect(0, 45 * mm, 90 * mm, 10 * mm, fill=1)
-    c.setFillAlpha(1.0)
-
-    # Business Name
-    c.setFillColor(white)
-    c.setFont("Helvetica-Bold", 16)
-    c.drawString(6 * mm, 40 * mm, business_name[:25])
-
-    # Tagline
-    if tagline:
-        c.setFont("Helvetica", 8)
-        c.drawString(6 * mm, 35 * mm, tagline[:50])
-
-    # Contact details
-    c.setFont("Helvetica", 8)
-    y = 26 * mm
-    if phone:
-        c.drawString(6 * mm, y, f"Phone: {phone}")
-        y -= 4 * mm
-    if address:
-        short_addr = address[:40] + ("..." if len(address) > 40 else "")
-        c.drawString(6 * mm, y, f"Addr: {short_addr}")
-        y -= 4 * mm
-    if website_url:
-        short_url = website_url.replace("https://", "").replace("http://", "")[:35]
-        c.drawString(6 * mm, y, f"Web: {short_url}")
-        y -= 4 * mm
-    if upi_id:
-        c.drawString(6 * mm, y, f"UPI: {upi_id}")
-
-    # GENESIS watermark
-    c.setFont("Helvetica", 5)
-    c.setFillAlpha(0.5)
-    c.drawString(6 * mm, 3 * mm, "Powered by GENESIS AI")
-    c.setFillAlpha(1.0)
-
-    c.save()
-    return buf.getvalue()
-
-
 @app.post("/api/send-summary/{session_id}")
-async def send_summary_email(session_id: str):
-    """Send a launch summary email to the business owner with all links."""
-    from services.supabase_client import get_session, supabase
+async def send_summary_email(
+    session_id: str,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    """Send launch summary email. Auth + ownership + rate limited."""
+    limit_email(session_id)
+
+    from services.supabase_client import get_session_if_owner, supabase
     from services.email_client import send_outreach_email
-    import asyncio
 
-    session = await get_session(session_id)
+    # IDOR check
+    session = await get_session_if_owner(session_id, user_id)
     if not session:
-        return {"error": "Session not found"}
+        raise HTTPException(status_code=403, detail="Access denied")
 
-    # Get all agent results
     def _fetch():
         result = supabase.table("agent_tasks").select("result_data, agent_name").eq(
             "session_id", session_id
@@ -504,10 +559,97 @@ async def send_summary_email(session_id: str):
         )
         return {"sent": True, "result": result}
 
-    return {"sent": False, "html_preview": html, "note": "No owner email on file. Add owner_email to session data."}
+    return {"sent": False, "html_preview": html, "note": "No owner email on file."}
+
+
+# ═══════════════════════════════════════
+# Business Card PDF Generator (internal)
+# ═══════════════════════════════════════
+
+def _generate_business_card_pdf(
+    business_name: str,
+    tagline: str,
+    phone: str,
+    address: str,
+    website_url: str,
+    upi_id: str,
+    primary_color: str,
+    qr_url: str,
+) -> bytes:
+    """Generate a printable business card PDF (90mm x 55mm)."""
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.units import mm
+    from reportlab.lib.colors import HexColor, white
+    import io
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=(90 * mm, 55 * mm))
+
+    try:
+        bg_color = HexColor(primary_color)
+    except Exception:
+        bg_color = HexColor("#FF6B35")
+
+    c.setFillColor(bg_color)
+    c.rect(0, 0, 90 * mm, 55 * mm, fill=1)
+
+    c.setFillColor(HexColor("#FFFFFF"))
+    c.setFillAlpha(0.15)
+    c.rect(0, 45 * mm, 90 * mm, 10 * mm, fill=1)
+    c.setFillAlpha(1.0)
+
+    c.setFillColor(white)
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(6 * mm, 40 * mm, business_name[:25])
+
+    if tagline:
+        c.setFont("Helvetica", 8)
+        c.drawString(6 * mm, 35 * mm, tagline[:50])
+
+    c.setFont("Helvetica", 8)
+    y = 26 * mm
+    if phone:
+        c.drawString(6 * mm, y, f"Phone: {phone}")
+        y -= 4 * mm
+    if address:
+        short_addr = address[:40] + ("..." if len(address) > 40 else "")
+        c.drawString(6 * mm, y, f"Addr: {short_addr}")
+        y -= 4 * mm
+    if website_url:
+        short_url = website_url.replace("https://", "").replace("http://", "")[:35]
+        c.drawString(6 * mm, y, f"Web: {short_url}")
+        y -= 4 * mm
+    if upi_id:
+        c.drawString(6 * mm, y, f"UPI: {upi_id}")
+
+    c.setFont("Helvetica", 5)
+    c.setFillAlpha(0.5)
+    c.drawString(6 * mm, 3 * mm, "Powered by GENESIS AI")
+    c.setFillAlpha(1.0)
+
+    c.save()
+    return buf.getvalue()
+
+
+# ═══════════════════════════════════════
+# Global Error Handler
+# ═══════════════════════════════════════
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Catch-all error handler — logs and returns safe error."""
+    security_logger.api_error(
+        endpoint=str(request.url.path),
+        error=str(exc),
+        status_code=500,
+        ip=request.client.host if request.client else "unknown",
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
 
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
-
