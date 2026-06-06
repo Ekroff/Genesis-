@@ -417,22 +417,82 @@ function ChatPanel({
   );
 }
 
-// ═══════════ VIDEO PANEL (TruGen Placeholder) ═══════════
+// ═══════════ VIDEO PANEL (TruGen AI Avatar) ═══════════
 
-function VideoPanel() {
-  return (
-    <div className="video-panel">
-      <div className="video-panel-placeholder">
-        <div style={{ fontSize: "3rem", marginBottom: "12px" }}>🎙️</div>
-        <h3 style={{ fontSize: "1.1rem", marginBottom: "8px" }}>
-          AI Avatar
-        </h3>
-        <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", maxWidth: "250px" }}>
-          TruGen AI avatar will appear here.
-          <br />
-          Speak naturally in Hindi to set up your business.
-        </p>
+const TRUGEN_AGENT_ID = "56c7c319-c335-483f-b8b9-d1181580601a";
+
+function VideoPanel({ onLaunch, isLaunched }: { onLaunch?: (data: LaunchRequest) => void; isLaunched?: boolean }) {
+  const [callStarted, setCallStarted] = useState(false);
+
+  const trugenContext = encodeURIComponent(
+    "You are GENESIS AI. Help this Indian small business owner set up their digital presence. Collect: business name, type, menu/services with prices, address, phone, UPI ID. Speak in Hindi/Hinglish."
+  );
+
+  const trugenUrl = `https://app.trugen.ai/embed/${TRUGEN_AGENT_ID}?username=GenesisUser&id=genesis_${Date.now()}&context=${trugenContext}`;
+
+  // Listen for messages from TruGen iframe (tool call results)
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      // Accept messages from TruGen domain
+      if (event.origin !== "https://app.trugen.ai") return;
+
+      try {
+        const data = event.data;
+        // If TruGen sends back the collected business data via postMessage
+        if (data && data.type === "tool_call" && data.tool === "submit_business_data" && onLaunch && !isLaunched) {
+          onLaunch(data.payload as LaunchRequest);
+        }
+      } catch (err) {
+        console.log("[VideoPanel] Message parse error:", err);
+      }
+    };
+
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [onLaunch, isLaunched]);
+
+  if (!callStarted) {
+    return (
+      <div className="video-panel">
+        <div className="video-panel-placeholder">
+          <div style={{ fontSize: "3rem", marginBottom: "16px" }}>🎙️</div>
+          <h3 style={{ fontSize: "1.1rem", marginBottom: "8px", fontWeight: 600 }}>
+            AI Video Assistant
+          </h3>
+          <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", maxWidth: "280px", lineHeight: 1.5 }}>
+            Talk face-to-face with our AI avatar in Hindi.
+            <br />
+            It will collect your business details and launch everything automatically.
+          </p>
+          <button
+            className="btn btn-accent"
+            style={{ marginTop: "20px", padding: "12px 32px", fontSize: "0.95rem" }}
+            onClick={() => setCallStarted(true)}
+          >
+            🎥 Start Video Call
+          </button>
+          <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "10px" }}>
+            Camera & microphone access required
+          </p>
+        </div>
       </div>
+    );
+  }
+
+  return (
+    <div className="video-panel" style={{ padding: 0, overflow: "hidden" }}>
+      <iframe
+        src={trugenUrl}
+        allow="camera; microphone; fullscreen; display-capture"
+        style={{
+          width: "100%",
+          height: "100%",
+          border: "none",
+          borderRadius: "16px",
+          minHeight: "500px",
+        }}
+        title="GENESIS AI Avatar"
+      />
     </div>
   );
 }
@@ -504,7 +564,7 @@ export default function DashboardPage() {
             marginBottom: "24px",
           }}
         >
-          <VideoPanel />
+          <VideoPanel onLaunch={handleLaunch} isLaunched={!!sessionId} />
           <ChatPanel onLaunch={handleLaunch} isLaunched={!!sessionId} />
         </div>
 
