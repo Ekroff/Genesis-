@@ -18,6 +18,7 @@ from services.supabase_client import push_update
 from services.fal_client import generate_logo
 from services.gemini_client import generate_json
 from services.social_kit import generate_social_media_kit
+from services.brand_guidelines import generate_brand_guidelines_pdf
 import traceback
 
 
@@ -102,12 +103,31 @@ Think about what a local business owner would actually say proudly.
         )
 
         kit_count = sum(1 for v in social_kit_urls.values() if v)
-        await push_update(sid, "brand", 85, f"Social media kit ready! {kit_count} images generated 📦")
+        await push_update(sid, "brand", 82, f"Social media kit ready! {kit_count} images generated 📦")
 
         # ══════════════════════════════════════
-        # PHASE 4: Compile & Complete (85% → 100%)
+        # PHASE 4: Brand Guidelines PDF (82% → 93%)
         # ══════════════════════════════════════
-        await push_update(sid, "brand", 90, "Finalizing brand kit... 📦")
+        await push_update(sid, "brand", 85, "Creating brand guidelines PDF... 📄")
+
+        brand_pdf_url = await generate_brand_guidelines_pdf(
+            session_id=sid,
+            business_name=state["business_name"],
+            tagline_hindi=tagline_hindi,
+            tagline_english=tagline_english,
+            primary_color=primary_color,
+            secondary_color=secondary_color,
+            font_name=brand_data.get("font", "Poppins"),
+            brand_mood=brand_data.get("brand_mood", ""),
+            logo_url=logo_url,
+        )
+
+        await push_update(sid, "brand", 93, "Brand guidelines PDF ready! 📄")
+
+        # ══════════════════════════════════════
+        # PHASE 5: Compile & Complete (93% → 100%)
+        # ══════════════════════════════════════
+        await push_update(sid, "brand", 95, "Finalizing brand kit... 📦")
 
         photo_urls = []
         if state.get("shop_photo_url"):
@@ -130,6 +150,7 @@ Think about what a local business owner would actually say proudly.
                 "facebook_cover": social_kit_urls.get("facebook_cover"),
                 "whatsapp_dp": social_kit_urls.get("whatsapp_dp"),
             },
+            "brand_guidelines_pdf": brand_pdf_url,
         }
 
         await push_update(
