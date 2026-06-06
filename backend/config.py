@@ -12,3 +12,8 @@ GOOGLE_PLACES_KEY = os.getenv("GOOGLE_PLACES_KEY", "")
 TRUGEN_API_KEY = os.getenv("TRUGEN_API_KEY", "")
 SARVAM_API_KEY = os.getenv("SARVAM_API_KEY", "")
 KIE_API_KEY = os.getenv("KIE_API_KEY", "")
+
+# Gmail SMTP for outreach emails
+GMAIL_ADDRESS = os.getenv("GMAIL_ADDRESS", "")
+GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "")
+

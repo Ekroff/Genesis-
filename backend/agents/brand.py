@@ -1,21 +1,23 @@
-"""Brand Agent — Creates complete brand identity for the business.
+"""Brand Agent — Creates complete brand identity + social media kit for the business.
 
 What it produces:
-- Logo (via Gemini Imagen / fal.ai)
+- Logo (via fal.ai)
 - Primary + secondary colors
 - Hindi + English tagline
 - Font recommendation
 - Social media profile data
+- Social Media Kit (Instagram Post 1080x1080, Story 1080x1920, FB Cover 1200x630, WhatsApp DP 500x500)
 - Brand guidelines summary
 
 Dependencies: None (runs in parallel with Payment, Outreach, Legal)
-Writes to state: logo_url, primary_color, secondary_color, tagline_hindi, tagline_english, photo_urls
+Writes to state: logo_url, primary_color, secondary_color, tagline_hindi, tagline_english, photo_urls, social_kit_urls
 """
 
 from agents.state import GenesisState
 from services.supabase_client import push_update
 from services.fal_client import generate_logo
 from services.gemini_client import generate_json
+from services.social_kit import generate_social_media_kit
 import traceback
 
 
@@ -25,27 +27,25 @@ async def brand_agent(state: GenesisState) -> dict:
 
     try:
         # ══════════════════════════════════════
-        # PHASE 1: Logo Generation (0% → 40%)
+        # PHASE 1: Logo Generation (0% → 35%)
         # ══════════════════════════════════════
         await push_update(sid, "brand", 5, "Starting brand creation... 🎨")
 
         if state.get("existing_logo_url"):
-            # User uploaded their own logo — use it
             logo_url = state["existing_logo_url"]
-            await push_update(sid, "brand", 30, "Using your existing logo ✅")
+            await push_update(sid, "brand", 25, "Using your existing logo ✅")
         else:
-            # Generate logo with AI
             await push_update(sid, "brand", 10, "Creating your logo... 🎨")
             logo_url = await generate_logo(
                 state["business_name"],
                 state["business_type"],
             )
-            await push_update(sid, "brand", 40, "Logo generated! ✅")
+            await push_update(sid, "brand", 35, "Logo generated! ✅")
 
         # ══════════════════════════════════════
-        # PHASE 2: Brand Identity (40% → 75%)
+        # PHASE 2: Brand Identity (35% → 60%)
         # ══════════════════════════════════════
-        await push_update(sid, "brand", 45, "Generating colors + tagline... 🎨")
+        await push_update(sid, "brand", 40, "Generating colors + tagline... 🎨")
 
         menu_str = ""
         if state.get("menu"):
@@ -77,14 +77,38 @@ Make the tagline feel authentic Indian — not corporate English translated to H
 Think about what a local business owner would actually say proudly.
 """)
 
-        await push_update(sid, "brand", 70, "Brand identity ready! Creating kit... 📦")
+        primary_color = brand_data.get("primary_color", "#FF6B35")
+        secondary_color = brand_data.get("secondary_color", "#FFF8F0")
+        tagline_hindi = brand_data.get("tagline_hindi", "")
+        tagline_english = brand_data.get("tagline_english", "")
+
+        await push_update(sid, "brand", 60, "Brand identity ready! Creating social media kit... 📱")
 
         # ══════════════════════════════════════
-        # PHASE 3: Compile Brand Kit (75% → 100%)
+        # PHASE 3: Social Media Kit (60% → 85%)
         # ══════════════════════════════════════
-        await push_update(sid, "brand", 80, "Finalizing brand kit... 📦")
+        await push_update(sid, "brand", 65, "Generating Instagram, Facebook, WhatsApp images... 🖼️")
 
-        # Use user's uploaded photos if available, otherwise empty list
+        social_kit_urls = await generate_social_media_kit(
+            session_id=sid,
+            business_name=state["business_name"],
+            tagline_hindi=tagline_hindi,
+            tagline_english=tagline_english,
+            primary_color=primary_color,
+            secondary_color=secondary_color,
+            logo_url=logo_url,
+            phone=state.get("phone", ""),
+            address=state.get("address", ""),
+        )
+
+        kit_count = sum(1 for v in social_kit_urls.values() if v)
+        await push_update(sid, "brand", 85, f"Social media kit ready! {kit_count} images generated 📦")
+
+        # ══════════════════════════════════════
+        # PHASE 4: Compile & Complete (85% → 100%)
+        # ══════════════════════════════════════
+        await push_update(sid, "brand", 90, "Finalizing brand kit... 📦")
+
         photo_urls = []
         if state.get("shop_photo_url"):
             photo_urls.append(state["shop_photo_url"])
@@ -92,33 +116,38 @@ Think about what a local business owner would actually say proudly.
         # Build result data for dashboard display
         result_data = {
             "logo_url": logo_url,
-            "primary_color": brand_data.get("primary_color", "#FF6B35"),
-            "secondary_color": brand_data.get("secondary_color", "#FFF8F0"),
-            "tagline_hindi": brand_data.get("tagline_hindi", ""),
-            "tagline_english": brand_data.get("tagline_english", ""),
+            "primary_color": primary_color,
+            "secondary_color": secondary_color,
+            "tagline_hindi": tagline_hindi,
+            "tagline_english": tagline_english,
             "font": brand_data.get("font", "Poppins"),
             "brand_mood": brand_data.get("brand_mood", ""),
             "instagram_bio": brand_data.get("instagram_bio", ""),
             "whatsapp_status": brand_data.get("whatsapp_status", ""),
+            "social_kit": {
+                "instagram_post": social_kit_urls.get("instagram_post"),
+                "instagram_story": social_kit_urls.get("instagram_story"),
+                "facebook_cover": social_kit_urls.get("facebook_cover"),
+                "whatsapp_dp": social_kit_urls.get("whatsapp_dp"),
+            },
         }
 
         await push_update(
             sid, "brand", 100,
-            "Brand kit ready! ✅",
+            "Brand kit + social media images ready! ✅",
             status="completed",
             result_data=result_data,
         )
 
-        # Return state updates
         completed = list(state.get("completed_agents", []))
         completed.append("brand")
 
         return {
             "logo_url": logo_url,
-            "primary_color": brand_data.get("primary_color", "#FF6B35"),
-            "secondary_color": brand_data.get("secondary_color", "#FFF8F0"),
-            "tagline_hindi": brand_data.get("tagline_hindi", ""),
-            "tagline_english": brand_data.get("tagline_english", ""),
+            "primary_color": primary_color,
+            "secondary_color": secondary_color,
+            "tagline_hindi": tagline_hindi,
+            "tagline_english": tagline_english,
             "photo_urls": photo_urls,
             "completed_agents": completed,
         }
@@ -129,7 +158,7 @@ Think about what a local business owner would actually say proudly.
         await push_update(sid, "brand", 0, error_msg, status="error")
 
         completed = list(state.get("completed_agents", []))
-        completed.append("brand")  # Mark as done even on error so graph continues
+        completed.append("brand")
 
         return {
             "logo_url": state.get("logo_url"),
