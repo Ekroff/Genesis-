@@ -1,23 +1,20 @@
-"""Brand Agent — Creates complete brand identity + social media kit for the business.
+"""Brand Agent — Creates brand identity + brand guidelines PDF.
 
 What it produces:
 - Logo (via fal.ai)
 - Primary + secondary colors
 - Hindi + English tagline
 - Font recommendation
-- Social media profile data
-- Social Media Kit (Instagram Post 1080x1080, Story 1080x1920, FB Cover 1200x630, WhatsApp DP 500x500)
-- Brand guidelines summary
+- Brand Guidelines PDF (color palette, typography, do's/don'ts)
 
 Dependencies: None (runs in parallel with Payment, Outreach, Legal)
-Writes to state: logo_url, primary_color, secondary_color, tagline_hindi, tagline_english, photo_urls, social_kit_urls
+Writes to state: logo_url, primary_color, secondary_color, tagline_hindi, tagline_english
 """
 
 from agents.state import GenesisState
 from services.supabase_client import push_update
 from services.fal_client import generate_logo
 from services.gemini_client import generate_json
-from services.social_kit import generate_social_media_kit
 from services.brand_guidelines import generate_brand_guidelines_pdf
 import traceback
 
@@ -44,7 +41,7 @@ async def brand_agent(state: GenesisState) -> dict:
             await push_update(sid, "brand", 35, "Logo generated! ✅")
 
         # ══════════════════════════════════════
-        # PHASE 2: Brand Identity (35% → 60%)
+        # PHASE 2: Brand Identity (35% → 65%)
         # ══════════════════════════════════════
         await push_update(sid, "brand", 40, "Generating colors + tagline... 🎨")
 
@@ -70,7 +67,6 @@ Return JSON with these exact keys:
     "tagline_english": "English translation of the Hindi tagline",
     "font": "Google Font name that fits this brand (e.g., Poppins, Nunito, Outfit)",
     "brand_mood": "3 adjective description (e.g., warm, homely, trustworthy)",
-    "instagram_bio": "Short Instagram bio in Hindi, max 150 chars, include emoji",
     "whatsapp_status": "WhatsApp Business status text, max 100 chars"
 }}
 
@@ -83,32 +79,12 @@ Think about what a local business owner would actually say proudly.
         tagline_hindi = brand_data.get("tagline_hindi", "")
         tagline_english = brand_data.get("tagline_english", "")
 
-        await push_update(sid, "brand", 60, "Brand identity ready! Creating social media kit... 📱")
+        await push_update(sid, "brand", 65, "Brand identity ready! 🎨")
 
         # ══════════════════════════════════════
-        # PHASE 3: Social Media Kit (60% → 85%)
+        # PHASE 3: Brand Guidelines PDF (65% → 90%)
         # ══════════════════════════════════════
-        await push_update(sid, "brand", 65, "Generating Instagram, Facebook, WhatsApp images... 🖼️")
-
-        social_kit_urls = await generate_social_media_kit(
-            session_id=sid,
-            business_name=state["business_name"],
-            tagline_hindi=tagline_hindi,
-            tagline_english=tagline_english,
-            primary_color=primary_color,
-            secondary_color=secondary_color,
-            logo_url=logo_url,
-            phone=state.get("phone", ""),
-            address=state.get("address", ""),
-        )
-
-        kit_count = sum(1 for v in social_kit_urls.values() if v)
-        await push_update(sid, "brand", 82, f"Social media kit ready! {kit_count} images generated 📦")
-
-        # ══════════════════════════════════════
-        # PHASE 4: Brand Guidelines PDF (82% → 93%)
-        # ══════════════════════════════════════
-        await push_update(sid, "brand", 85, "Creating brand guidelines PDF... 📄")
+        await push_update(sid, "brand", 70, "Creating brand guidelines PDF... 📄")
 
         brand_pdf_url = await generate_brand_guidelines_pdf(
             session_id=sid,
@@ -122,18 +98,15 @@ Think about what a local business owner would actually say proudly.
             logo_url=logo_url,
         )
 
-        await push_update(sid, "brand", 93, "Brand guidelines PDF ready! 📄")
+        await push_update(sid, "brand", 90, "Brand guidelines PDF ready! 📄")
 
         # ══════════════════════════════════════
-        # PHASE 5: Compile & Complete (93% → 100%)
+        # PHASE 4: Complete (90% → 100%)
         # ══════════════════════════════════════
-        await push_update(sid, "brand", 95, "Finalizing brand kit... 📦")
-
         photo_urls = []
         if state.get("shop_photo_url"):
             photo_urls.append(state["shop_photo_url"])
 
-        # Build result data for dashboard display
         result_data = {
             "logo_url": logo_url,
             "primary_color": primary_color,
@@ -142,20 +115,13 @@ Think about what a local business owner would actually say proudly.
             "tagline_english": tagline_english,
             "font": brand_data.get("font", "Poppins"),
             "brand_mood": brand_data.get("brand_mood", ""),
-            "instagram_bio": brand_data.get("instagram_bio", ""),
             "whatsapp_status": brand_data.get("whatsapp_status", ""),
-            "social_kit": {
-                "instagram_post": social_kit_urls.get("instagram_post"),
-                "instagram_story": social_kit_urls.get("instagram_story"),
-                "facebook_cover": social_kit_urls.get("facebook_cover"),
-                "whatsapp_dp": social_kit_urls.get("whatsapp_dp"),
-            },
             "brand_guidelines_pdf": brand_pdf_url,
         }
 
         await push_update(
             sid, "brand", 100,
-            "Brand kit + social media images ready! ✅",
+            "Brand identity + guidelines PDF ready! ✅",
             status="completed",
             result_data=result_data,
         )
