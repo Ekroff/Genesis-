@@ -6,7 +6,7 @@
   "rewrites": [
     {
       "source": "/_/backend/:path*",
-      "destination": "https://your-render-backend-url/_/backend/:path*"
+      "destination": "https://genesis-jny3.onrender.com/_/backend/:path*"
     }
   ]
 }
