@@ -34,7 +34,7 @@ const fadeInUp = {
     transition: {
       delay: i * 0.1,
       duration: 0.6,
-      ease: [0.16, 1, 0.3, 1],
+      ease: "easeOut",
     },
   }),
 };
@@ -52,7 +52,7 @@ const scaleIn = {
   visible: {
     opacity: 1,
     scale: 1,
-    transition: { duration: 0.5, ease: [0.16, 1, 0.3, 1] },
+    transition: { duration: 0.5, ease: "easeOut" },
   },
 };
 
